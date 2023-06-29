@@ -1,0 +1,178 @@
+Lab | Making predictions with logistic regression
+
+Instructions
+1-Create a query or queries to extract the information you think may be relevant for building the prediction model. It should include some film features and some rental features (X).
+
+SELECT
+  f.film_id,
+  f.title,
+  f.release_year,
+  f.length,
+  f.rating,
+  f.rental_duration,
+  f.rental_rate,
+  f.language_id,
+  COUNT(r.rental_id) AS rental_count,
+  AVG(f.rental_duration) AS avg_rental_duration,
+  AVG(f.rental_rate) AS avg_rental_rate
+FROM
+  film AS f
+JOIN
+  inventory AS i ON f.film_id = i.film_id
+JOIN
+  rental AS r ON i.inventory_id = r.inventory_id
+WHERE
+  r.rental_date >= '2005-05-01' AND r.rental_date <= '2005-05-31'
+GROUP BY
+  f.film_id, f.title, f.release_year, f.length, f.rating, f.rental_duration, f.rental_rate, f.language_id;
+
+ 2-Create a query to get the list of all unique film titles and a boolean indicating if it was rented (rental_date) in May 2005. (Create new column called - 'rented_in_may'). This will be our TARGET (y) variable.
+
+ SELECT 
+    film.title,
+    CASE WHEN rental.rental_date IS NULL THEN FALSE ELSE TRUE END AS rented_in_may
+FROM
+    film
+LEFT JOIN
+    inventory ON film.film_id = inventory.film_id
+LEFT JOIN
+    rental ON inventory.inventory_id = rental.inventory_id
+    AND date_format('year', rental.rental_date) = 2005
+    AND date_format('month', rental.rental_date) = 5
+GROUP BY
+    film.title;
+
+3-Read the data into a Pandas dataframe. At this point you should have 1000 rows. Number of columns depends on the number of features you chose.
+
+import pandas as pd
+import numpy as np
+
+import pymysql
+from sqlalchemy import create_engine
+
+import getpass  # To get the password without showing the input
+-----
+password = getpass.getpass()
+-----
+import sqlalchemy
+-----
+connection_string = 'mysql+pymysql://root:'+password+'@localhost/sakila'
+engine = create_engine(connection_string)
+data = pd.read_sql_query("SELECT f.film_id, f.title, f.release_year, f.length, f.rating, f.rental_duration, f.rental_rate, f.language_id, COUNT(r.rental_id) AS rental_count, AVG(f.rental_duration) AS avg_rental_duration, AVG(f.rental_rate) AS avg_rental_rate FROM film AS f JOIN inventory AS i ON f.film_id = i.film_id JOIN rental AS r ON i.inventory_id = r.inventory_id WHERE r.rental_date >= '2005-05-01' AND r.rental_date <= '2005-05-31' GROUP BY f.film_id, f.title, f.release_year, f.length, f.rating, f.rental_duration, f.rental_rate, f.language_id", engine)
+
+data.head()
+-----
+4-Analyze extracted features (X) and transform them. You may need to encode some categorical variables, or scale numerical variables.
+
+data.shape
+data.dtypes
+data.isna().sum()
+data.describe().T
+-----
+import matplotlib.pyplot as plt
+import seaborn as sns
+-----
+corr_matrix=data.corr(method='pearson')  # default
+fig, ax = plt.subplots(figsize=(10, 8))
+ax = sns.heatmap(corr_matrix, annot=True)
+plt.show()
+-----
+def plot_distributions(df):
+    numerical_columns = df.select_dtypes(np.number)
+    for col in numerical_columns:
+        sns.displot(df[col])
+        plt.show()
+-----
+y = data['rating']
+X = data.drop('rating', axis=1)
+
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=1337)
+-----
+
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+# from sklearn.preprocessing import StandardScaler
+
+X_train_num = X_train.select_dtypes(include = np.number)
+X_test_num  = X_test.select_dtypes(include = np.number)
+
+# Scaling data
+transformer = MinMaxScaler().fit(X_train_num) # need to keep transformer
+
+X_train_normalized = transformer.transform(X_train_num)
+X_test_normalized  = transformer.transform(X_test_num)
+
+X_train_norm = pd.DataFrame(X_train_normalized, columns=X_train_num.columns)
+X_test_norm  = pd.DataFrame(X_test_normalized, columns=X_test_num.columns)
+-----
+X_train_norm.describe()
+-----
+X_train_norm.columns = X_train_num.columns
+X_train_norm.head()
+-----
+X_train_categorical = X_train.select_dtypes('object')
+X_test_categorical  = X_test.select_dtypes('object')
+
+from sklearn.preprocessing import OneHotEncoder
+
+encoder = OneHotEncoder(drop='first',handle_unknown='ignore')
+encoder.fit(X_train_categorical)
+
+X_train_cat_np = encoder.transform(X_train_categorical).toarray()
+X_test_cat_np  = encoder.transform(X_test_categorical).toarray()
+
+X_train_cat = pd.DataFrame(X_train_cat_np, columns=encoder.get_feature_names_out())
+X_test_cat  = pd.DataFrame(X_test_cat_np,  columns=encoder.get_feature_names_out())
+
+X_train_cat.head()
+-----
+X_train_transformed = np.concatenate([X_train_norm, X_train_cat], axis=1)
+-----
+X_train_transformed
+-----
+from sklearn.linear_model import LogisticRegression
+
+classification = LogisticRegression(random_state=0, solver='lbfgs',
+                  multi_class='multinomial')
+
+classification.fit(X_train_transformed, y_train)
+-----
+classification = LogisticRegression(random_state=0, solver='saga',
+                  multi_class='multinomial')
+
+classification.fit(X_train_transformed, y_train)
+-----
+X_test_transformed = np.concatenate([X_test_norm, X_test_cat], axis=1)
+-----
+y_test_pred = classification.predict(X_test_transformed)
+print(y_test_pred)
+
+from sklearn.metrics import accuracy_score
+
+print(accuracy_score(y_test,y_test_pred))
+classification.score(X_test_transformed, y_test)
+-----
+print(y_test.value_counts())
+-----
+pd.Series(y_test_pred).value_counts()
+-----
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+
+confusion_matrix(y_test, y_test_pred)
+-----
+cm_test = confusion_matrix(y_test, y_test_pred)
+
+disp = ConfusionMatrixDisplay(cm_test,display_labels=classification.classes_)
+disp.plot()
+plt.show()
+-----
+from sklearn.metrics import cohen_kappa_score
+----
+cohen_kappa_score(y_test, y_test_pred)
+----
+from sklearn.metrics import classification_report
+
+print(classification_report(y_test, y_test_pred))
+-----
